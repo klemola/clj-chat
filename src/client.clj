@@ -9,11 +9,6 @@
 
 (def help-text "\"h\": help, \"q\": quit, \"j <room name> <nickname>\": join room, \"s <message>\": send message to room")
 
-(defn client
-  [host port]
-  (d/chain (tcp/client {:host host, :port port})
-           #(common/wrap-duplex-stream common/protocol %)))
-
 (defn join-command
   [input]
   (let [[room-name nickname & rest] (string/split input #"\s+")]
@@ -42,6 +37,7 @@
   [response]
   (let [event (get response :event)
         data (get response :data)]
+    (println "server-response" response)
     (match event
       :history (dorun (map display-message data))
       :broadcast-message (display-message data)
@@ -49,8 +45,21 @@
 
 (defn send-event
   [client event]
-  @(s/put! client event)
-  (server-response @(s/take! client)))
+  @(s/put! client event))
+
+(defn consume-events [stream]
+  (defn loop-fn []
+    (let [message (s/take! stream)]
+      (when message
+        (server-response message)
+        (recur))))
+
+  (loop []
+    (try
+      (loop-fn)
+      (catch Exception e
+        (println "Error while consuming messages:" e)
+        (recur)))))
 
 (defn step
   [c command]
@@ -68,7 +77,13 @@
     (println "bye!")
     (recur (step c input-result) c)))
 
+(defn client
+  [host port]
+  (d/chain (tcp/client {:host host, :port port})
+           #(common/wrap-duplex-stream common/protocol %)))
+
 (defn -main
   [& _]
   (let [c @(client "localhost" common/port)]
+    (consume-events c)
     (chat-loop :help c)))
