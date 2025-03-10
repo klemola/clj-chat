@@ -1,11 +1,14 @@
 (ns client
   "TCP chat client"
   (:require [aleph.tcp :as tcp]
+            [chime.core :as chime]
             [clojure.core.match :refer [match]]
             [clojure.string :as string]
             [common]
             [manifold.deferred :as d]
             [manifold.stream :as s]))
+
+(import '[java.time Instant Duration])
 
 (def help-text "\"h\": help, \"q\": quit, \"j <room name> <nickname>\": join room, \"s <message>\": send message to room")
 
@@ -34,10 +37,10 @@
   (println msg))
 
 (defn server-response
-  [response]
-  (let [event (get response :event)
-        data (get response :data)]
-    (println "server-response" response)
+  [message]
+  (let [event (get message :event)
+        data (get message :data)]
+    (println "server-response" message)
     (match event
       :history (dorun (map display-message data))
       :broadcast-message (display-message data)
@@ -48,18 +51,10 @@
   @(s/put! client event))
 
 (defn consume-events [stream]
-  (defn loop-fn []
-    (let [message (s/take! stream)]
-      (when message
-        (server-response message)
-        (recur))))
+  (s/consume server-response stream))
 
-  (loop []
-    (try
-      (loop-fn)
-      (catch Exception e
-        (println "Error while consuming messages:" e)
-        (recur)))))
+(defn quit [] ((println "bye!")
+               (java.lang.System/exit 0)))
 
 (defn step
   [c command]
@@ -74,7 +69,7 @@
 (defn chat-loop
   [input-result c]
   (if (= input-result :quit)
-    (println "bye!")
+    (quit)
     (recur (step c input-result) c)))
 
 (defn client

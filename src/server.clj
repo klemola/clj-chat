@@ -7,7 +7,6 @@
    [common]))
 
 (def messages (atom []))
-
 (def stream-id-counter (atom 0))
 (def streams (atom {}))
 
@@ -16,37 +15,36 @@
 
 (defn broadcast-message
   [msg]
-  (dorun (map (partial send-message msg) (vals @streams))))
+  (doseq [stream (vals @streams)]
+    (send-message msg stream)))
 
 (defn receive-event
   [stream event]
+  (println "Received event:" event)
   (match event
-    [:join room nickname] (do (println "join")
-                              (println (keys @streams))
-                              @(s/put! stream {:event :history :data @messages}))
-    [:say msg] (do (swap! messages conj msg)
-                   @(s/put! stream {:event :broadcast-message :data msg}))
-    :else :err))
+    [:join room nickname] (do
+                            (println "Current streams:" (keys @streams))
+                            @(s/put! stream {:event :history :data @messages}))
+    [:say msg] (do
+                 (swap! messages conj msg)
+                 (broadcast-message msg))
+    :else (println "Unknown event:" event)))
 
 (defn register-stream
-  [s]
-  (swap! stream-id-counter inc)
-  (swap! streams assoc @stream-id-counter s)
-  s)
+  [stream]
+  (let [id (swap! stream-id-counter inc)]
+    (swap! streams assoc id stream)
+    (println "Registered stream:" id)
+    stream))
 
-(defn stream-handler
-  []
-  (fn [s info]
-    (register-stream s)
-    (s/map #(receive-event s %) s)))
+(defn handle-client
+  [stream info]
+  (let [wrapped-stream (common/wrap-duplex-stream common/protocol stream)]
+    (register-stream wrapped-stream)
+    (s/consume #(receive-event wrapped-stream %) wrapped-stream)))
 
 (defn -main
   [& args]
-  (println "Invoke server with" args)
-  (tcp/start-server
-   (fn [s info]
-     ((stream-handler)
-      (common/wrap-duplex-stream common/protocol s)
-      info))
-   {:port common/port}))
-
+  (println "Starting server on port" common/port)
+  (tcp/start-server handle-client {:port common/port})
+  @(promise)) ; Keep the server running
